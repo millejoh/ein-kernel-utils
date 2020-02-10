@@ -60,7 +60,7 @@ LANG-CODE is a string suitable for passing to format.")
                          collecting `(ein:define-langtool-command ',language ',(car d) ,(cdr d)))))
       `(progn
          ,@expr)))
-  (cl-defmacro ein:langtool-execute-command (kernel command &key args output)
+  (cl-defmacro ein:langtool-execute-command (kernel command &key args output execute-reply (silent t))
     (let ((lang (cl-gensym))
           (cmd (cl-gensym)))
       `(let* ((,lang (intern (ein:$kernelspec-language (ein:$kernel-kernelspec ,kernel))))
@@ -72,7 +72,10 @@ LANG-CODE is a string suitable for passing to format.")
                    `(format ,cmd ,@args)
                  `(format ,cmd ,args))
               ,(if (not (null output))
-                   `(list :output (cons ,@output))))
+                   `(list :output (cons ,@output)
+                          :execute_reply (cons #'(lambda (&rest _args)) nil))
+                 `(list :execute_reply (cons #'(lambda (&rest _args)) nil)))
+              :silent ,silent)
            (error "ein-pytools: Langtool command not defined for %s in language %s" ,command ,lang))))))
 
 
@@ -134,7 +137,11 @@ If OTHER-WINDOW is non-`nil', open the file in the other window."
       (insert-file-contents pytools-file)
       (ein:kernel-execute
        kernel
-       (buffer-string)))))
+       (buffer-string)
+       (list
+        :execute_reply (cons #'(lambda (file &rest _args)
+                                 (message "ein-kernel-utils: Pytools loaded."))
+                             pytools-file))))))
 
 (defun ein:pytools-reinject ()
   "Re-send ein's pytools code to the current kernel.
@@ -194,7 +201,9 @@ working."
                                        func))
       (ein:kernel-object-info-request
        kernel func (list :object_info_reply
-                         (cons #'ein:pytools-finish-tooltip nil))))))
+                         (cons #'ein:pytools-finish-tooltip nil)
+                         :execute_reply
+                         (cons #'(lambda (&rest _args)) nil))))))
 
 (declare-function pos-tip-show "pos-tip")
 (declare-function popup-tip "popup")
@@ -217,13 +226,16 @@ working."
 (defun ein:pytools-request-help (kernel func)
   (interactive (list (ein:get-kernel-or-error)
                      (ein:object-at-point-or-error)))
-  (ein:kernel-execute kernel
-                      (format "%s?" func) ; = code
-                      nil                 ; = callbacks
-                      ;; It looks like that magic command does
-                      ;; not work in silent mode.
-                      :silent nil))
+  (ein:langtool-execute-command kernel 'request-help
+                                :args func
+                                :silent nil))
 
+;; (ein:kernel-execute kernel
+;;                     (format "%s?" func) ; = code
+;;                     nil                 ; = callbacks
+;;                     ;; It looks like that magic command does
+;;                     ;; not work in silent mode.
+;;                     :silent nil)
 (defun ein:pytools-request-tooltip-or-help (&optional pager)
   "Show the help for the object at point using tooltip.
 When the prefix argument ``C-u`` is given, open the help in the
