@@ -258,6 +258,6 @@
   (interactive)
   (add-to-list 'company-backends #'ein:company-backend)
   (awhen (ein:get-kernel)
-    (ein:pytools-load-safely it)))
+    (ein:kernel-utils-load-safely it)))
 
 (provide 'ein-kernel-completion)

@@ -4,7 +4,7 @@
 
 ;; Author: John Miller <millejoh at mac dot com>
 ;; Maintainer: John Miller <millejoh at mac dot com>
-;; Version: 0.1
+;; Version: "0.1"
 ;; Keywords: ein, python
 ;; URL: https://github.com/millejoh/ein-kernel-utils
 ;; Package-Requires: ((ein company))
@@ -569,4 +569,4 @@ Currently EIN/IPython supports exporting to the following formats:
 
 (provide 'ein-kernel-utils)
 
-;;; ein-kernel-utilss.el ends here
+;;; ein-kernel-utils.el ends here
