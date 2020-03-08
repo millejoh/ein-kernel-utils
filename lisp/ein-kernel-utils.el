@@ -152,7 +152,7 @@ If OTHER-WINDOW is non-`nil', open the file in the other window."
        (buffer-string)
        (list
         :execute_reply (cons #'(lambda (file &rest _args)
-                                 (message "ein-kernel-utils: Kernel utils loaded from %a." file))
+                                 (message "ein-kernel-utils: Kernel utils loaded from %s." file))
                              kernel-utils-file))))))
 
 (defun ein:kernel-utils-reinject ()

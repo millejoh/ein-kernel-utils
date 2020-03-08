@@ -25,6 +25,7 @@
 ;;; Code:
 
 (require 'ein-kernel-utils)
+(require 'ein-connect)
 (require 'deferred)
 (require 'company)
 (require 'anaphora)
@@ -112,6 +113,8 @@
             kernel
             (format "__ein_generate_oinfo_data(%s, locals())" objs)
             (list
+             :execute-reply (cons #'(lambda (&rest _args))
+                                  nil)
              :output `(,(lambda (d* &rest args) (deferred:callback-post d* args)) . ,d)))
          (deferred:callback-post d "kernel not live"))))
     d))
@@ -222,9 +225,9 @@
                         (ein:company-handle-doc-buffer arg cb))))
     (location (cons :async
                     (lambda (cb)
-                      (ein:pytools-find-source (ein:get-kernel-or-error)
-                                               arg
-                                               cb))))
+                      (ein:kernel-utils-find-source (ein:get-kernel-or-error)
+                                                    arg
+                                                    cb))))
     (candidates
      (let* ((kernel (ein:get-kernel-or-error))
             (cached (ein:completions-get-cached arg (ein:$kernel-oinfo-cache kernel))))
@@ -254,10 +257,11 @@
                                               (list :object object
                                                     :callback cb)))))
 
-(defun ein:enable-company-kernel-completion ()
-  (interactive)
+;;;###autoload
+(defun ein:enable-company-kernel-completion (kernel)
+  (interactive (list (ein:get-kernel-or-error)))
   (add-to-list 'company-backends #'ein:company-backend)
-  (awhen (ein:get-kernel)
-    (ein:kernel-utils-load-safely it)))
+  (when kernel
+    (ein:kernel-utils-load-safely kernel)))
 
 (provide 'ein-kernel-completion)
