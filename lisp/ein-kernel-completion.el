@@ -113,7 +113,7 @@
             kernel
             (format "__ein_generate_oinfo_data(%s, locals())" objs)
             (list
-             :execute-reply (cons #'(lambda (&rest _args))
+             :execute_reply (cons #'(lambda (&rest _args))
                                   nil)
              :output `(,(lambda (d* &rest args) (deferred:callback-post d* args)) . ,d)))
          (deferred:callback-post d "kernel not live"))))

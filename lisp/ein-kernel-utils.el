@@ -309,8 +309,8 @@ pager buffer.  You can explicitly specify the object by selecting it."
           (push (point-marker) ein:kernel-utils-jump-stack))
       (setq ein:kernel-utils-jump-stack (list (point-marker)))))
   (ein:kernel-utils-execute-command kernel 'find-source :args object
-                                :output (#'ein:kernel-utils-jump-to-source-1
-                                         (list kernel object other-window notebook))))
+                                    :output (#'ein:kernel-utils-jump-to-source-1
+                                             (list kernel object other-window notebook))))
 
 ;; (ein:kernel-execute
 ;;  kernel
@@ -365,18 +365,13 @@ When the prefix argument ``C-u`` is given, open the source code
 in the other window.  You can explicitly specify the object by
 selecting it."
   (interactive "P")
-  (if poly-ein-mode
-      (cl-letf (((symbol-function 'xref--prompt-p) #'ignore))
-        (if other-window
-            (call-interactively #'xref-find-definitions-other-window)
-          (call-interactively #'xref-find-definitions)))
-    (let ((kernel (ein:get-kernel))
-          (object (ein:object-at-point)))
-      (cl-assert (ein:kernel-live-p kernel) nil "Kernel is not ready.")
-      (cl-assert object nil "Object at point not found.")
-      (ein:kernel-utils-jump-to-source kernel object other-window
-                                  (when ein:propagate-connect
-                                    (ein:get-notebook))))))
+  (let ((kernel (ein:get-kernel))
+        (object (ein:object-at-point)))
+    (cl-assert (ein:kernel-live-p kernel) nil "Kernel is not ready.")
+    (cl-assert object nil "Object at point not found.")
+    (ein:kernel-utils-jump-to-source kernel object other-window
+                                     (when ein:propagate-connect
+                                       (ein:get-notebook)))))
 
 (defun ein:kernel-utils-jump-back-command (&optional other-window)
   "Go back to the point where `ein:kernel-utils-jump-to-source-command'

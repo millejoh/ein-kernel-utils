@@ -1,26 +1,28 @@
 """
-Python utilities to use it from ein.el
+Python code to support ein-kernel-utils.el
 
-Copyright (C) 2012- Takafumi Arakaki
+Copyright (C) 2012 - Takafumi Arakaki
+Copyright (C) 2020 - John Miller
 
 Author: Takafumi Arakaki <aka.tkf at gmail.com>
+Author: John Miller
 
-ein.py is free software: you can redistribute it and/or modify
+ein_remote_safe.py is free software: you can redistribute it and/or modify
 it under the terms of the GNU General Public License as published by
 the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 
-ein.py is distributed in the hope that it will be useful,
+ein_remote_safe.py is distributed in the hope that it will be useful,
 but WITHOUT ANY WARRANTY; without even the implied warranty of
 MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
-along with ein.py.  If not, see <http://www.gnu.org/licenses/>.
+along with ein_remote_safe.py.  If not, see <http://www.gnu.org/licenses/>.
 
 """
 
-__ein_pytools_version = "1.1.0"
+__ein_pytools_version = "1.2.0"
 
 try:
     from matplotlib import rc as __ein_rc
@@ -36,39 +38,16 @@ def __ein_export_nb(nb_json, format):
     output = nbconvert.export_by_name(format, nb)
     print(output[0])
 
-
-def __ein_find_edit_target_012(*args, **kwds):
-    from IPython.core.interactiveshell import InteractiveShell
-    inst = InteractiveShell.instance()
-    return inst._find_edit_target(*args, **kwds)
-
-
-def __ein_find_edit_target_013(*args, **kwds):
-    from IPython.core.interactiveshell import InteractiveShell
-    inst = InteractiveShell.instance()
-    return CodeMagics._find_edit_target(inst, *args, **kwds)
-
-
 def __ein_find_edit_target_python(name):
-    from inspect import getsourcefile, getsourcelines
     try:
-        obj = eval(name)
-    except NameError:
+        from jedi import Interpreter
+
+        defs = Interpreter(name, [locals()]).infer()
+        if defs:
+            return(defs[0].module_path, defs[0].line)
+        else return False
+    except:
         return False
-    else:
-        sfile = getsourcefile(obj)
-        sline = getsourcelines(obj)[-1]
-        if sfile and sline:
-            return(sfile, sline, False)
-        else:
-            return False
-
-try:
-    from IPython.core.magics import CodeMagics
-    __ein_find_edit_target = __ein_find_edit_target_013
-except ImportError:
-    __ein_find_edit_target = __ein_find_edit_target_012
-
 
 def __ein_set_matplotlib_param(family, setting, value):
     settings = {}
@@ -98,7 +77,7 @@ def __ein_get_matplotlib_params():
 def __ein_find_source(name):
     """Given an object as string, `name`, print its place in source code."""
     # FIXME: use JSON display object instead of stdout
-    ret =  __ein_find_edit_target_python(name) or __ein_find_edit_target(name, {}, [])
+    ret =  __ein_find_edit_target_python(name)
     if ret:
         (filename, lineno, use_temp) = ret
         if not use_temp:
