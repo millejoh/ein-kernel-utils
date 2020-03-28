@@ -258,10 +258,8 @@
                                                     :callback cb)))))
 
 ;;;###autoload
-(defun ein:enable-company-kernel-completion (kernel)
-  (interactive (list (ein:get-kernel-or-error)))
-  (add-to-list 'company-backends #'ein:company-backend)
-  (when kernel
-    (ein:kernel-utils-load-safely kernel)))
+(defun ein:enable-company-kernel-completion ()
+  (interactive)
+  (add-to-list 'company-backends #'ein:company-backend))
 
 (provide 'ein-kernel-completion)
