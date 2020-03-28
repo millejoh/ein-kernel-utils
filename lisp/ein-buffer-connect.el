@@ -94,7 +94,7 @@ notebook list."
 ;;; Class
 
 (ein:deflocal ein:%buffer-kernel% nil
-  "Buffer local variable to store an instance of `ein:buffer-connection'")
+  "Permanent buffer local variable to store an instance of `ein:buffer-connection'")
 
 
 (defclass ein:buffer-connection ()
@@ -103,18 +103,25 @@ notebook list."
    (buffer :initarg :buffer :type buffer)))
 
 (defun ein:new-buffer-kernel (notebook buffer)
+  (with-current-buffer buffer
+    (when ein:%buffer-kernel%
+      (ein:disconnect-notebook buffer)))
   (let ((kernel (ein:$notebook-kernel notebook)))
     (cl-assert (ein:kernel-live-p kernel) nil
                "Warning: Trying to connect to a disconnected kernel. Please verify the status of %s"
                (ein:notebook-buffer notebook))
     (ein:events-on (ein:$kernel-events kernel) 'status_disconnected.Kernel
-                   #'(lambda (buffer _ignore)
-                       (message "Disconnecting ein kernel connection for buffer %s." buffer)
-                       (with-current-buffer buffer
-                         (setq ein:%buffer-kernel% nil))))
+                   #'(lambda (&rest _ignore)
+                       (ein:disconnect-notebook buffer)))
     (ein:buffer-connection :notebook notebook
                            :nb-buffer (ein:notebook-buffer notebook)
                            :buffer buffer)))
+
+(defun ein:disconnect-notebook (buffer)
+  (message "Disconnecting ein kernel connection for buffer %s." buffer)
+  (kill-buffer (ein:shared-output-buffer))
+  (with-current-buffer buffer
+    (setq ein:%buffer-kernel% nil)))
 
 
 ;;; Methods
@@ -126,9 +133,10 @@ you can choose any notebook on your server including the ones
 not yet opened.  Otherwise, already chose from already opened
 notebooks."
   (interactive "P")
-  (call-interactively (if not-yet-opened
-                          #'ein:connect-to-any-notebook
-                        #'ein:connect-to-open-notebook)))
+  (if (or not-yet-opened (null (ein:notebook-opened-buffer-names)))
+      (call-interactively #'ein:connect-to-any-notebook)
+    (call-interactively #'ein:connect-to-open-notebook)))
+
 
 ;;;###autoload
 (defun ein:connect-to-any-notebook (nbpath &optional buffer no-reconnection)
@@ -141,7 +149,9 @@ the notebook and create a session for the associated kernel."
                        (apply-partially
                         (lambda (buffer* no-reconnection* notebook _created)
                           (ein:connect-buffer-to-notebook notebook buffer* no-reconnection*))
-                        (or buffer (current-buffer)) no-reconnection))))
+                        (or buffer (current-buffer)) no-reconnection)
+                       #'ignore
+                       t)))
 
 ;;;###autoload
 (defun ein:connect-to-open-notebook (buffer-or-name)
@@ -159,6 +169,7 @@ notebooks."
 (defun ein:connect-buffer-to-notebook (notebook &optional buffer
                                                 no-reconnection)
   "Connect BUFFER to NOTEBOOK."
+  (cl-assert (ein:notebook-live-p notebook) t "Notebook kernel is not running, cannot connect.")
   (unless buffer
     (setq buffer (current-buffer)))
   (with-current-buffer buffer
@@ -173,22 +184,19 @@ notebooks."
       (ein:log 'info "Buffer is already connected to notebook."))))
 
 (defun ein:connect-get-notebook ()
-  (ein:buffer-notebook ein:%buffer-kernel%))
+  (if ein:%buffer-kernel%
+      (ein:buffer-notebook ein:%buffer-kernel%)
+    (warn "Buffer is not connected to an active notebook (try calling `ein:connect-to-notebook' first).")))
 
 (defun ein:connect-get-kernel ()
   (ein:$notebook-kernel (ein:connect-get-notebook)))
-
 
 (defun ein:connect-eval-buffer ()
   "Evaluate the whole buffer.  Note that this will run the code
 inside the ``if __name__ == \"__main__\":`` block."
   (interactive)
-  (let ((b (current-buffer)))
-    (deferred:$
-      (deferred:next
-        (lambda ()
-          (with-current-buffer b
-            (ein:shared-output-eval-string (ein:connect-get-kernel) (buffer-string) :silent t))))))
+  (with-current-buffer (current-buffer)
+    (ein:connect-execute-command (buffer-string)))
   (ein:log 'info "Whole buffer is sent to the kernel."))
 
 (defun ein:connect-run-buffer (&optional ask-command)
@@ -201,20 +209,32 @@ Variable `ein:connect-run-command' sets the default command."
                           (read-from-minibuffer "Command: " default-command)
                         default-command))
              (cmd (format "%s \"%s\"" command it)))
-        (ein:connect-execute-command cmd))
+        (if (ein:maybe-save-buffer ein:connect-save-before-run)
+            (ein:connect-execute-command cmd)
+          (ein:log 'info "Buffer must be saved before %%run.")))
     (error (concat "This buffer has no associated file.  "
                    "Use `ein:connect-eval-buffer' instead."))))
 
 (defun ein:connect-execute-command (command)
-  (if (ein:maybe-save-buffer ein:connect-save-before-run)
-      (progn
-        (ein:shared-output-eval-string (ein:connect-get-kernel) command :silent t)
-        (ein:log 'info "Command sent to the kernel: %s" command)
-        (aand (ein:shared-output-get-cell)
-              (ein:cell-get-tb-data it)
-              (ein:tb-popup (ein:tb-new (format "*ein:tb %s" (buffer-name)) (ein:connect-get-notebook))
-                            it)))
-    (ein:log 'info "Buffer must be saved before %%run.")))
+  (let ((kernel (ein:connect-get-kernel)))
+    (deferred:$
+      (deferred:next
+        (lambda ()
+          (ein:shared-output-eval-string kernel command :silent nil)
+          (ein:log 'info "Command sent to the kernel: %s" command)
+          (ein:wait-until #'(lambda (cell) (not (slot-value cell 'running)))
+                          (list (ein:shared-output-get-cell)))
+          (ein:connect-handle-traceback kernel))))))
+
+(defun ein:connect-handle-traceback (kernel)
+  (setf (ein:$kernel-after-execute-hook kernel)
+        (remove 'ein:connect-handle-traceback (ein:$kernel-after-execute-hook kernel)))
+  (or
+   (aand (ein:shared-output-get-cell)
+         (ein:cell-get-tb-data it)
+         (ein:tb-popup (ein:tb-new (format "*ein:tb %s" (buffer-name)) (ein:connect-get-notebook))
+                       it))
+   (ein:log 'info "Command successfully executed.")))
 
 (defun ein:connect-run-or-eval-buffer (&optional eval)
   "Run buffer using the ``%run`` magic command or eval whole
@@ -232,7 +252,9 @@ See also: `ein:connect-run-buffer', `ein:connect-eval-buffer'."
   (interactive)
   (aif (buffer-file-name)
       (let ((command (format "%s \"%s\"" "%run -n" it)))
-        (ein:connect-execute-command command))))
+        (if (ein:maybe-save-buffer ein:connect-save-before-run)
+            (ein:connect-execute-command command)
+          (ein:log 'info "Buffer must be saved before %%run.")))))
 
 (defun ein:connect-eval-region (start end)
   (interactive "r")
@@ -242,7 +264,7 @@ See also: `ein:connect-run-buffer', `ein:connect-eval-buffer'."
 (defun ein:connect-pop-to-notebook ()
   (interactive)
   (ein:connect-assert-connected)
-  (pop-to-buffer (slot-value ein:%buffer-kernel% 'nb-buffer)))
+  (pop-to-buffer (ein:notebook-buffer (ein:connect-get-notebook))))
 
 
 
