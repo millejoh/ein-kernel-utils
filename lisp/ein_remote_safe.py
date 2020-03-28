@@ -98,7 +98,8 @@ def __ein_run_docstring_examples(obj, verbose=True):
 def __ein_generate_oinfo_data(ostrings, locals=None):
     import json
 
-    defined_objects = [__ein_maybe_undefined_object(obj, locals) for obj in ostrings
+    safe_strings = [o for o in ostrings if not o.startswith('%')]
+    defined_objects = [__ein_maybe_undefined_object(obj, locals) for obj in safe_string
                        if __ein_maybe_undefined_object(obj, locals) is not None]
     odata = [__ein_object_info_for(obj) for obj in defined_objects]
 
