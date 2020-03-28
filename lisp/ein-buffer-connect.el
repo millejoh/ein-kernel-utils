@@ -186,7 +186,11 @@ notebooks."
 (defun ein:connect-get-notebook ()
   (if ein:%buffer-kernel%
       (ein:buffer-notebook ein:%buffer-kernel%)
-    (warn "Buffer is not connected to an active notebook (try calling `ein:connect-to-notebook' first).")))
+    (message "Buffer is not connected to an active notebook, please select one to continue.")
+    (ein:connect-to-notebook)
+    (ein:wait-until #'(lambda (x) (not (null x)))
+                    (list ein:%buffer-kernel%))
+    (ein:buffer-notebook ein:%buffer-kernel%)))
 
 (defun ein:connect-get-kernel ()
   (ein:$notebook-kernel (ein:connect-get-notebook)))
