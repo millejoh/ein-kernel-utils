@@ -25,7 +25,6 @@
 ;;; Code:
 
 (require 'ein-kernel-utils)
-(require 'ein-connect)
 (require 'deferred)
 (require 'company)
 (require 'anaphora)
