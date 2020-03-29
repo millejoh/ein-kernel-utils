@@ -45,7 +45,8 @@ def __ein_find_edit_target_python(name):
         defs = Interpreter(name, [locals()]).infer()
         if defs:
             return(defs[0].module_path, defs[0].line)
-        else return False
+        else:
+            return False
     except:
         return False
 
@@ -99,7 +100,7 @@ def __ein_generate_oinfo_data(ostrings, locals=None):
     import json
 
     safe_strings = [o for o in ostrings if not o.startswith('%')]
-    defined_objects = [__ein_maybe_undefined_object(obj, locals) for obj in safe_string
+    defined_objects = [__ein_maybe_undefined_object(obj, locals) for obj in safe_strings
                        if __ein_maybe_undefined_object(obj, locals) is not None]
     odata = [__ein_object_info_for(obj) for obj in defined_objects]
 

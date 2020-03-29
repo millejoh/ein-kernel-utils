@@ -85,11 +85,6 @@ notebook list."
                  (function :tag "Notebook path getter"))
   :group 'ein)
 
-(defcustom ein:on-buffer-connect (list 'ein:enable-company-kernel-completion)
-  "Normal hook for functions to execute after connecting a buffer to a running notebook."
-  :type 'list
-  :group 'ein)
-
 
 ;;; Class
 
@@ -177,7 +172,9 @@ notebooks."
             (not ein:%buffer-kernel%))
         (let ((connection (ein:new-buffer-kernel notebook buffer)))
           (setq ein:%buffer-kernel% connection)
-          (run-hooks 'ein:on-buffer-connect)
+          (ein:kernel-utils-register-buffer buffer (ein:connect-get-kernel))
+          (if (fboundp 'ein:company-backend)
+              (add-to-list 'company-backends #'ein:company-backend))
           (ein:log 'info "Connected to %s"
                    (ein:$notebook-notebook-name notebook))
           connection)
@@ -296,6 +293,20 @@ notebook."
     (ein:connect-to-any-notebook nbpath nil t)))
 
 
+
+;;; Support for editing org source blocks
+
+(defun ein:on-edit-source-block ()
+  (when (cl-search "ein-python" (buffer-name))
+    (let ((buf (marker-buffer org-src--beg-marker))
+          (pos (marker-position org-src--beg-marker))
+          session)
+      (with-current-buffer buf
+        (goto-char pos)
+        (setf session (assoc :session (third (org-babel-get-src-block-info)))))
+      )))
+
+(add-hook 'org-src-mode-hook #'ein:on-edit-source-block)
 
 ;;; ein:connect-mode
 

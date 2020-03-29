@@ -68,7 +68,7 @@
    `ein:completer-finish-completing-ac'.  When it is specified,
    it overrides `ac-expand-on-auto-complete' when calling
    `auto-complete'."
-  (interactive (list (ein:get-kernel)
+  (interactive (list (ein:kernel-utils--find-kernel)
                      (list :complete_reply
                            (cons #'ein:completer-finish-completing '(:expand nil)))
                      #'ignore))
@@ -82,12 +82,12 @@
 (defun ein:get-completion-context (api-version)
   (cond ((< api-version 5)
          (values (thing-at-point 'line) (current-column)))
-        ((and (ein:get-kernel) (ein:get-cell-at-point))
+        ((and (ein:kernel-utils--find-kernel) (ein:get-cell-at-point))
          (let* ((cell (ein:get-cell-at-point))
                 (code (ein:cell-get-text cell))
                 (beg (ein:cell-input-pos-min cell)))
            (values code (- (point) beg))))
-        ((ein:get-kernel)
+        ((ein:kernel-utils--find-kernel)
          (values (buffer-string) (1- (point))))))
 
 ;;; Retrieving Python Object Info
@@ -95,7 +95,7 @@
   (setf (ein:$kernel-oinfo-cache kernel) (make-hash-table :test #'equal)))
 
 (defun ein:dev-clear-oinfo-cache (kernel)
-  (interactive (list (ein:get-kernel)))
+  (interactive (list (ein:kernel-utils--find-kernel)))
   (ein:completions--reset-oinfo-cache kernel))
 
 (defun ein:completions-get-cached (partial oinfo-cache)
@@ -105,7 +105,7 @@
 
 (defun ein:completions--get-oinfo (objs)
   (let ((d (deferred:new #'identity))
-        (kernel (ein:get-kernel)))
+        (kernel (ein:kernel-utils--find-kernel)))
     (ein:case-equal (ein:$kernelspec-language (ein:$kernel-kernelspec kernel))
       (("python")
        (if (ein:kernel-live-p kernel)
@@ -138,9 +138,9 @@
                                         (ein:display-warning output :error)
                                       (ein:completions--prepare-oinfo output objects kernel)))))))
     (if (< (length objects) ein:oinfo-chunk-size)
-        (do-completions (format "[%s]" (to-ostrings (-non-nil objects))) (ein:get-kernel))
+        (do-completions (format "[%s]" (to-ostrings (-non-nil objects))) (ein:kernel-utils--find-kernel))
       (dolist (chunk (-partition-all ein:oinfo-chunk-size (-non-nil objects)))
-        (do-completions (format "[%s]" (to-ostrings chunk)) (ein:get-kernel))))))
+        (do-completions (format "[%s]" (to-ostrings chunk)) (ein:kernel-utils--find-kernel))))))
 
 
 (defun ein:completions--prepare-oinfo (output objs kernel)
@@ -168,7 +168,7 @@
 
 (defun ein:completer--get-eldoc-signature ()
   (ein:and-let* ((func (ein:function-at-point))
-                 (kernel (ein:get-kernel)))
+                 (kernel (ein:kernel-utils--find-kernel)))
     (aif (gethash func (ein:$kernel-oinfo-cache kernel))
         (ein:kernel-construct-defstring it)
       (ein:completions--build-oinfo-cache (list func))
@@ -179,7 +179,7 @@
 (defun ein:company--deferred-complete ()
   (let ((d (deferred:new #'identity)))
     (ein:completer-complete
-     (ein:get-kernel)
+     (ein:kernel-utils--find-kernel)
      (list :complete_reply
            (cons (lambda (d* &rest args) (deferred:callback-post d* args))
                  d))
@@ -209,15 +209,16 @@
       (ein:completions--build-oinfo-cache prefixed-matches)
       (funcall fetcher prefixed-matches))))
 
+
+
 ;;;###autoload
 (defun ein:company-backend (command &optional arg &rest _)
   (interactive (list 'interactive))
   (cl-case command
     (interactive (company-begin-backend 'ein:company-backend))
-    (prefix (and (or (ein:worksheet-at-codecell-p) ein:connect-mode)
-                 (ein:get-kernel)
+    (prefix (and (ein:kernel-utils--find-kernel)
                  (ein:object-prefix-at-point)))
-    (annotation (let ((kernel (ein:get-kernel)))
+    (annotation (let ((kernel (ein:kernel-utils--find-kernel)))
                   (aif (gethash arg (ein:$kernel-oinfo-cache kernel))
                       (plist-get it :definition))))
     (doc-buffer (cons :async
@@ -225,11 +226,11 @@
                         (ein:company-handle-doc-buffer arg cb))))
     (location (cons :async
                     (lambda (cb)
-                      (ein:kernel-utils-find-source (ein:get-kernel-or-error)
+                      (ein:kernel-utils-find-source (ein:kernel-utils--find-kernel)
                                                     arg
                                                     cb))))
     (candidates
-     (let* ((kernel (ein:get-kernel-or-error))
+     (let* ((kernel (ein:kernel-utils--find-kernel))
             (cached (ein:completions-get-cached arg (ein:$kernel-oinfo-cache kernel))))
        (aif cached it
          (unless (ein:company--punctuation-check (thing-at-point 'line)
@@ -250,7 +251,7 @@
                                            (ansi-color-apply (cadr (plist-get content :data)))))))
 
 (defun ein:company-handle-doc-buffer (object cb)
-  (ein:kernel-object-info-request (ein:get-kernel-or-error)
+  (ein:kernel-object-info-request (ein:kernel-utils--find-kernel)
                                   object
                                   (list :inspect_reply
                                         (cons #'ein:company-handle-doc-buffer-finish

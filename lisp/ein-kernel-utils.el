@@ -42,6 +42,30 @@
   (ein:$kernelspec-language (ein:$kernel-kernelspec kernel)))
 
 
+;;; Kernel support inside a buffer
+
+(defvar *ein:kernel-utils-buffer-registry* (make-hash-table))
+
+(defun ein:kernel-utils-register-buffer (buf kernel)
+  (with-current-buffer buf
+    (setf (gethash (buffer-name buf) *ein:kernel-utils-buffer-registry*) kernel)
+    (ein:log 'debug "Registering buffer %s with kernel %s."
+             (buffer-name buf)
+             (ein:$kernel-kernel-id kernel))
+    (add-hook 'kill-bufferhook #'(lambda ()
+                                   (ein:kernel-utils-degregister-buffer buf)))))
+
+(defun ein:kernel-utils-deregister-buffer (buf)
+  (ein:log 'debug "Removing jupyter support for buffer %s with %s."
+           (buffer-name buf)
+           (ein:$kernel-kernel-id (gethash (buffer-name buf) *ein:kernel-utils-buffer-registry*)))
+  (remhash (buffer-name buf) *ein:kernel-utils-buffer-registry*))
+
+(defun ein:kernel-utils--find-kernel ()
+  (or (ein:get-kernel) (gethash (buffer-name (current-buffer))
+                                *ein:kernel-utils-buffer-registry*)))
+
+
 ;;; Support tooling in languages other than Python
 
 (defvar *ein:kernel-utils-db* (make-hash-table)
@@ -365,7 +389,7 @@ When the prefix argument ``C-u`` is given, open the source code
 in the other window.  You can explicitly specify the object by
 selecting it."
   (interactive "P")
-  (let ((kernel (ein:get-kernel))
+  (let ((kernel (ein:kernel-utils--find-kernel))
         (object (ein:object-at-point)))
     (cl-assert (ein:kernel-live-p kernel) nil "Kernel is not ready.")
     (cl-assert object nil "Object at point not found.")
@@ -395,16 +419,16 @@ given, open the last point in the other window."
   "Do the doctest of the object at point."
   (interactive)
   (let* ((object (ein:object-at-point))
-         (kernel (ein:get-kernel))
+         (kernel (ein:kernel-utils--find-kernel))
          (cmd (ein:get-kernel-utils-command kernel 'run-docstring)))
-    (ein:shared-output-eval-string (ein:get-kernel)
+    (ein:shared-output-eval-string (ein:kernel-utils--find-kernel)
                                    (format cmd object)
                                    t)))
 
 (defun ein:kernel-utils-whos ()
   "Execute ``%whos`` magic command and popup the result."
   (interactive)
-  (ein:shared-output-eval-string (ein:get-kernel) "%whos" t))
+  (ein:shared-output-eval-string (ein:kernel-utils--find-kernel) "%whos" t))
 
 (defun ein:kernel-utils-hierarchy (&optional ask)
   "Draw inheritance graph of the class at point.
@@ -418,7 +442,7 @@ You can explicitly specify the object by selecting it.
       (setq object (read-from-minibuffer "class or object: " object)))
     (cl-assert (and object (not (equal object "")))
                nil "Object at point not found.")
-    (ein:shared-output-eval-string (ein:get-kernel) (format "%%hierarchy %s" object) t)))
+    (ein:shared-output-eval-string (ein:kernel-utils--find-kernel) (format "%%hierarchy %s" object) t)))
 
 (defun ein:kernel-utils-pandas-to-ses (dataframe)
   "View pandas_ DataFrame in SES_ (Simple Emacs Spreadsheet).
@@ -435,7 +459,7 @@ to install it if you are using newer Emacs.
                  (generate-new-buffer-name "*ein:ses pandas*"))))
     ;; fetch TSV (tab separated values) via stdout
     (ein:kernel-request-stream
-     (ein:get-kernel)
+     (ein:kernel-utils--find-kernel)
      (concat dataframe ".to_csv(__import__('sys').stdout, sep='\\t')")
      (lambda (tsv buffer)
        (with-current-buffer buffer
@@ -491,7 +515,7 @@ Currently EIN/IPython supports exporting to the following formats:
           (insert json)
           (json-pretty-print (point-min) (point-max)))
       (ein:kernel-request-stream
-       (ein:get-kernel)
+       (ein:kernel-utils--find-kernel)
        (format "__ein_export_nb(r'%s', '%s')"
                json
                format)
@@ -509,17 +533,17 @@ Currently EIN/IPython supports exporting to the following formats:
 (defun ein:kernel-utils-set-figure-size (width height)
   "Set the default figure size for matplotlib figures. Works by setting `rcParams['figure.figsize']`."
   (interactive "nWidth: \nnHeight: ")
-  (let ((kernel (ein:get-kernel)))
+  (let ((kernel (ein:kernel-utils--find-kernel)))
     (ein:kernel-utils-execute-command kernel 'set-figure-size :args (width height)))
   )
-;; (ein:shared-output-eval-string (ein:get-kernel)
+;; (ein:shared-output-eval-string (ein:kernel-utils--find-kernel)
 ;;                                (format "__ein_set_figure_size('[%s, %s]')" width height)
 ;;                                nil)
 
 (defun ein:kernel-utils-set-figure-dpi (dpi)
   "Set the default figure dpi for matplotlib figures. Works by setting `rcParams['figure.figsize']`."
   (interactive "nFigure DPI: ")
-  (let ((kernel (ein:get-kernel)))
+  (let ((kernel (ein:kernel-utils--find-kernel)))
     (ein:kernel-utils-execute-command kernel 'set-figure-dpi :args dpi)))
 
 (defun ein:kernel-utils-set-matplotlib-parameter (param value)
@@ -527,16 +551,16 @@ Currently EIN/IPython supports exporting to the following formats:
   (interactive
    (list (completing-read "Parameter: " (ein:kernel-utils--get-matplotlib-params) nil t)
          (read-string "Value: " nil)))
-  (let* ((kernel (ein:get-kernel))
+  (let* ((kernel (ein:kernel-utils--find-kernel))
          (split (cl-position ?. param))
          (family (cl-subseq param 0 split))
          (setting (cl-subseq param (1+ split))))
     (ein:kernel-utils-execute-command kernel 'set-figure-param :args (family setting value))))
 
 (defun ein:kernel-utils--get-matplotlib-params ()
-  (let* ((kernel (ein:get-kernel))
+  (let* ((kernel (ein:kernel-utils--find-kernel))
          (cmd (ein:get-kernel-utils-command kernel 'get-figure-param)))
-    (ein:shared-output-eval-string (ein:get-kernel)
+    (ein:shared-output-eval-string (ein:kernel-utils--find-kernel)
                                    (format cmd)
                                    nil)
     (with-current-buffer (ein:shared-output-create-buffer)
