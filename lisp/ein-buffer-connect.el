@@ -35,6 +35,7 @@
 (require 'ein-kernel-utils)
 (require 'ein-events)
 (require 'ein-traceback)
+(require 'ob-ein)
 
 (defun ein:maybe-save-buffer (option)
   "Conditionally save current buffer.
@@ -273,7 +274,7 @@ See also: `ein:connect-run-buffer', `ein:connect-eval-buffer'."
   (cl-assert (not (null ein:%buffer-kernel%)) nil
              "Current buffer (%s) is not connected to IPython notebook."
              (buffer-name))
-  (cl-assert (ein:kernel-live-p (slot-value ein:%buffer-kernel% 'kernel)) nil
+  (cl-assert (ein:kernel-live-p (ein:connect-get-kernel)) nil
              "Connected notebook kernel is not live."))
 
 
@@ -296,15 +297,22 @@ notebook."
 
 ;;; Support for editing org source blocks
 
+(defun ein:on-edit-source-block--finish (buf nb)
+  (with-current-buffer buf
+    (ein:connect-buffer-to-notebook nb buf)
+    (add-to-list 'company-backends 'ein:company-backend)))
+
 (defun ein:on-edit-source-block ()
   (when (cl-search "ein-python" (buffer-name))
-    (let ((buf (marker-buffer org-src--beg-marker))
-          (pos (marker-position org-src--beg-marker))
-          session)
+    (let ((srcbuf (current-buffer))
+          (buf (marker-buffer org-src--beg-marker))
+          (pos (marker-position org-src--beg-marker)))
       (with-current-buffer buf
         (goto-char pos)
-        (setf session (assoc :session (third (org-babel-get-src-block-info)))))
-      )))
+        (ob-ein--initiate-session (cdr (assoc :session (third (org-babel-get-src-block-info))))
+                                  nil
+                                  #'(lambda (nb)
+                                      (ein:on-edit-source-block--finish srcbuf nb)))))))
 
 (add-hook 'org-src-mode-hook #'ein:on-edit-source-block)
 

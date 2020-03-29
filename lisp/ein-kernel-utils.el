@@ -170,6 +170,7 @@ If OTHER-WINDOW is non-`nil', open the file in the other window."
                                                      (ein:$kernel-kernelspec kernel)))
                                                 'tools-file))
            (kernel-utils-file (format "%s/%s" ein:kernel-utils-dir fname)))
+      (cl-assert (file-exists-p kernel-utils-file) nil "Cannot find kernel utils language file %s." kernel-utils-file)
       (insert-file-contents kernel-utils-file)
       (ein:kernel-execute
        kernel
