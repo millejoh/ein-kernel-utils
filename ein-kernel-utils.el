@@ -157,6 +157,7 @@ If OTHER-WINDOW is non-`nil', open the file in the other window."
                  (const :tag "No" nil))
   :group 'ein)
 
+;;;###autoload
 (defun ein:kernel-utils-setup-hooks (kernel)
   (add-to-list (cons #'ein:kernel-utils-load-safely kernel)
                (ein:$kernel-after-start-hook kernel)))
@@ -164,6 +165,7 @@ If OTHER-WINDOW is non-`nil', open the file in the other window."
 (defun ein:kernel-utils-wrap-hy-code (code)
   (format "__import__('hy').eval(__import__('hy').read_str('''%s'''))" code))
 
+;;;###autoload
 (defun ein:kernel-utils-load-safely (kernel)
   (with-temp-buffer
     (let* ((fname (ein:get-kernel-utils-command (intern (ein:$kernelspec-language
@@ -180,6 +182,7 @@ If OTHER-WINDOW is non-`nil', open the file in the other window."
                                  (message "ein-kernel-utils: Kernel utils loaded from %s." file))
                              kernel-utils-file))))))
 
+;;;###autoload
 (defun ein:kernel-utils-reinject ()
   "Re-send ein's kernel-utils code to the current kernel.
 

@@ -165,7 +165,8 @@
 
 ;;; Support for Eldoc
 
-(defun ein:completer--get-eldoc-signature ()
+;;;###autoload
+(defun ein:completer-get-eldoc-signature ()
   (ein:and-let* ((func (ein:function-at-point))
                  (kernel (ein:kernel-utils--find-kernel)))
     (aif (gethash func (ein:$kernel-oinfo-cache kernel))
