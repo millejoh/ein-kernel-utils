@@ -21,13 +21,6 @@
 
 ;;; Commentary:
 
-;; FIXME: There is a problem when connected notebook is closed.
-;;        This can be fixed in some ways:
-;; * Turn off ein:connect when the command that uses kernel is invoked
-;;   but corresponding notebook was closed already.
-;; * Connect directly to ein:kernel and make its destructor to care
-;;   about connecting buffers.
-
 ;;; Code:
 
 (require 'eieio)
@@ -302,6 +295,7 @@ notebook."
     (ein:connect-buffer-to-notebook nb buf)
     (add-to-list 'company-backends 'ein:company-backend)))
 
+;;;###autoload
 (defun ein:on-edit-source-block ()
   (when (cl-search "ein-python" (buffer-name))
     (let ((srcbuf (current-buffer))
@@ -314,36 +308,7 @@ notebook."
                                   #'(lambda (nb)
                                       (ein:on-edit-source-block--finish srcbuf nb)))))))
 
-(add-hook 'org-src-mode-hook #'ein:on-edit-source-block)
 
-;;; ein:connect-mode
-
-;; (defvar ein:connect-mode-map (make-sparse-keymap))
-
-;; (let ((map ein:connect-mode-map))
-;;   (define-key map "\C-c\C-c" 'ein:connect-run-or-eval-buffer)
-;;   (define-key map "\C-c\C-l" 'ein:connect-reload-buffer)
-;;   (define-key map "\C-c\C-r" 'ein:connect-eval-region)
-;;   (define-key map (kbd "C-:") 'ein:shared-output-eval-string)
-;;   (define-key map "\C-c\C-z" 'ein:connect-pop-to-notebook)
-;;   (define-key map "\C-c\C-x" 'ein:tb-show)
-;;   (define-key map (kbd "C-c C-/") 'ein:notebook-scratchsheet-open)
-
-;;   map)
-
-;; (defun ein:connect-mode-get-lighter ()
-;;   " ein:c")
-
-;; (define-minor-mode ein:connect-mode
-;;   "Minor mode for communicating with IPython notebook.
-
-;; \\{ein:connect-mode-map}"
-;;   :lighter (:eval (ein:connect-mode-get-lighter))
-;;   :keymap ein:connect-mode-map
-;;   :group 'ein)
-
-;; (put 'ein:connect-mode 'permanent-local t)
-
 
 (provide 'ein-buffer-connect)
 

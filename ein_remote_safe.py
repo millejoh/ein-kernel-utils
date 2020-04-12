@@ -22,7 +22,7 @@ along with ein_remote_safe.py.  If not, see <http://www.gnu.org/licenses/>.
 
 """
 
-__ein_pytools_version = "1.2.0"
+__ein_pytools_version = "1.3.0"
 
 try:
     from matplotlib import rc as __ein_rc
@@ -30,6 +30,7 @@ try:
     __ein_matplotlib_available = True
 except ImportError:
     __ein_matplotlib_available = False
+
 
 def __ein_export_nb(nb_json, format):
     import IPython.nbconvert as nbconvert
@@ -39,16 +40,90 @@ def __ein_export_nb(nb_json, format):
     print(output[0])
 
 def __ein_find_edit_target_python(name):
-    try:
-        from jedi import Interpreter
+    from jedi import Interpreter
 
-        defs = Interpreter(name, [locals()]).infer()
+    try:
+        defs = Interpreter(name, [globals(), locals()]).infer()
         if defs:
             return(defs[0].module_path, defs[0].line)
         else:
             return False
     except:
         return False
+
+def __ein_find_source(name):
+    """Given an object as string, `name`, return its place in source code."""
+    import json
+
+    ret =  __ein_find_edit_target_python(name)
+    if ret:
+        (filename, lineno) = ret
+        print(json.dumps({'filename':filename,
+                          'lineno':lineno}))
+    else:
+        raise RuntimeError("Source code for {0} cannot be found".format(name))
+
+
+def __ein_run_docstring_examples(obj, verbose=True):
+    from IPython.core.interactiveshell import InteractiveShell
+    import doctest
+    inst = InteractiveShell.instance()
+    globs = inst.user_ns
+    return doctest.run_docstring_examples(obj, globs, verbose=verbose)
+
+def __ein_generate_oinfo_data(ostrings):
+    import json
+
+    safe_strings = [o for o in ostrings if not o.startswith('%')]
+    odata = [__ein_object_info_for(obj) for obj in safe_strings]
+
+    print (json.dumps(odata))
+    return odata
+
+def __ein_object_info_for(name):
+    from jedi import Interpreter
+
+    try:
+        inferred = Interpreter(name, [globals(), locals()]).infer()
+        defs = inferred[0]
+        sig = defs.get_signatures()
+        info_dict = {'type': defs.type,
+                     'module_name': defs.module_name,
+                     'module_path': defs.module_path,
+                     'line': defs.line,
+                     'column': defs.column,
+                     'docstring': defs.docstring(),
+                     'full_name' : defs.full_name,
+                     'call_signature' : ''
+                     }
+        if (type(sig) is list):
+            info_dict['call_signature'] = sig[0].to_string()
+        return info_dict
+    except Exception:
+        return {'type': '',
+                'module_name': '',
+                'line': '',
+                'column': '',
+                'docstring': '',
+                'full_name': '',
+                'call_signature': '',
+                }
+
+def __ein_print_object_info_for(obj):
+    import json
+
+    print (json.dumps(__ein_object_info_for(obj)))
+
+def __ein_eval_hy_string(obj):
+    try:
+        import hy
+    except ImportError:
+        print("Hy not supported in this kernel. Execute `pip install hy` if you want this support.")
+
+    expr = hy.read_str(obj)
+    ret = hy.eval(expr)
+
+    return ret
 
 def __ein_set_matplotlib_param(family, setting, value):
     settings = {}
@@ -73,71 +148,3 @@ def __ein_get_matplotlib_params():
         print(json.dumps([k for k in __ein_rcParams.keys()]))
     else:
         raise RuntimeError("Matplotlib not installed in this instance of python!")
-
-
-def __ein_find_source(name):
-    """Given an object as string, `name`, print its place in source code."""
-    # FIXME: use JSON display object instead of stdout
-    ret =  __ein_find_edit_target_python(name)
-    if ret:
-        (filename, lineno, use_temp) = ret
-        if not use_temp:
-            print(filename)
-            print(lineno)
-            return
-    raise RuntimeError("Source code for {0} cannot be found".format(name))
-
-
-def __ein_run_docstring_examples(obj, verbose=True):
-    from IPython.core.interactiveshell import InteractiveShell
-    import doctest
-    inst = InteractiveShell.instance()
-    globs = inst.user_ns
-    return doctest.run_docstring_examples(obj, globs, verbose=verbose)
-
-
-def __ein_generate_oinfo_data(ostrings, locals=None):
-    import json
-
-    safe_strings = [o for o in ostrings if not o.startswith('%')]
-    defined_objects = [__ein_maybe_undefined_object(obj, locals) for obj in safe_strings
-                       if __ein_maybe_undefined_object(obj, locals) is not None]
-    odata = [__ein_object_info_for(obj) for obj in defined_objects]
-
-    print (json.dumps(odata))
-    return odata
-
-def __ein_maybe_undefined_object(obj, locals=None):
-    try:
-        return eval(obj, None, locals)
-    except Exception:
-        return None
-    except SyntaxError:
-        return None
-
-def __ein_object_info_for(obj):
-    import IPython.core.oinspect
-
-    inspector = IPython.core.oinspect.Inspector()
-
-    try:
-        return inspector.info(obj)
-    except Exception:
-        return inspector.info(None)
-
-def __ein_print_object_info_for(obj):
-    import json
-
-    oinfo = __ein_object_info_for(obj)
-    print (json.dumps(oinfo))
-
-def __ein_eval_hy_string(obj):
-    try:
-        import hy
-    except ImportError:
-        print("Hy not supported in this kernel. Execute `pip install hy` if you want this support.")
-
-    expr = hy.read_str(obj)
-    ret = hy.eval(expr)
-
-    return ret

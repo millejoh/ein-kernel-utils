@@ -110,7 +110,7 @@
        (if (ein:kernel-live-p kernel)
            (ein:kernel-execute
             kernel
-            (format "__ein_generate_oinfo_data(%s, locals())" objs)
+            (format "__ein_generate_oinfo_data(%s)" objs)
             (list
              :execute_reply (cons #'(lambda (&rest _args))
                                   nil)
@@ -151,7 +151,7 @@
                (let ((all-oinfo (ein:json-read-from-string it)))
                  (cl-loop for oinfo in all-oinfo
                           for obj in objs
-                          doing (unless (string= (plist-get oinfo :string_form) "None")
+                          doing (unless (string= (plist-get oinfo :full_name) "None")
                                   (setf (gethash obj (ein:$kernel-oinfo-cache kernel))
                                         oinfo))))))
           (("error" "pyerr")
@@ -170,7 +170,7 @@
   (ein:and-let* ((func (ein:function-at-point))
                  (kernel (ein:kernel-utils--find-kernel)))
     (aif (gethash func (ein:$kernel-oinfo-cache kernel))
-        (ein:kernel-construct-defstring it)
+        (ein:kernel-utils--construct-defstring it)
       (ein:completions--build-oinfo-cache (list func))
       nil)))
 
@@ -219,8 +219,9 @@
     (prefix (and (ein:kernel-utils--find-kernel)
                  (ein:object-prefix-at-point)))
     (annotation (let ((kernel (ein:kernel-utils--find-kernel)))
-                  (aif (gethash arg (ein:$kernel-oinfo-cache kernel))
-                      (plist-get it :definition))))
+                  (aand (gethash arg (ein:$kernel-oinfo-cache kernel))
+                        (plist-get it :call_signature)
+                        (cl-subseq it (cl-position ?\( it)))))
     (doc-buffer (cons :async
                       (lambda (cb)
                         (ein:company-handle-doc-buffer arg cb))))

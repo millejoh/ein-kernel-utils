@@ -31,7 +31,8 @@
 
 ;;; Code:
 
-;; (require 'ein-notebook)
+(require 'ses)
+(require 'pos-tip)
 (require 'ein-kernel)
 (require 'ein-shared-output)
 
@@ -53,7 +54,7 @@
              (buffer-name buf)
              (ein:$kernel-kernel-id kernel))
     (add-hook 'kill-bufferhook #'(lambda ()
-                                   (ein:kernel-utils-degregister-buffer buf)))))
+                                   (ein:kernel-utils-deregister-buffer buf)))))
 
 (defun ein:kernel-utils-deregister-buffer (buf)
   (ein:log 'debug "Removing jupyter support for buffer %s with %s."
@@ -118,9 +119,9 @@ LANG-CODE is a string suitable for passing to format.")
 (ein:make-kernel-utils python
                    ((get-notebook-dir . "print(__import__('os').getcwd(),end='')")
                     (add-sys-path . "__import__('sys').path.append('%s')")
-                    (request-tooltip . "__ein_print_object_info_for(%s)")
+                    (request-tooltip . "__ein_print_object_info_for('%s')")
                     (request-help . "%s?")
-                    (object-info-request . "__ein_print_object_info_for(%s)")
+                    (object-info-request . "__ein_print_object_info_for('%s')")
                     (find-source . "__ein_find_source('%s')")
                     (run-doctest . "__ein_run_docstring_examples(%s)")
                     (set-figure-size . "__ein_set_figure_size('[%s, %s]')")
@@ -209,58 +210,65 @@ working."
   (cl-multiple-value-bind (kernel notebook) packed
     (ein:kernel-utils-execute-command kernel 'get-notebook-dir
                                   :output (#'ein:set-buffer-file-name notebook))))
-;; (ein:kernel-execute
-;;  kernel
-;;  (format "print(__import__('os').getcwd(),end='')")
-;;  (list
-;;   :output (cons
-;;            #'ein:set-buffer-file-name
-;;            notebook)))
+
 
 ;;; Tooltip and help
 
-;; We can probably be more sophisticated than this, but
-;; as a hack it will do.
+;; We can probably be more sophisticated than this, but as a hack it will do.
+
 (defun ein:kernel-utils-magic-func-p (fstr)
   (string-prefix-p "%" fstr))
+
+(defun ein:kernel-utils--construct-defstring (content)
+  "Construct call signature from CONTENT of ``:object_info_reply``.
+Used in `ein:kernel-utils-finish-tooltip', etc."
+  (plist-get content :call_signature))
+
+(defun ein:kernel-utils--construct-help-string (content)
+  "Construct help string from CONTENT of ``:object_info_reply``.
+Used in `ein:pytools-finish-tooltip', etc."
+  (let* ((defstring (ein:aand
+                     (ein:kernel-utils--construct-defstring content)
+                     (ansi-color-apply it)
+                     (ein:string-fill-paragraph it)))
+         (docstring (ein:aand
+                     (plist-get content :docstring)
+                     (ansi-color-apply it)))
+         (help (ein:aand
+                (delete nil (list defstring docstring))
+                (ein:join-str "\n" it))))
+    help))
 
 (defun ein:kernel-utils-request-tooltip (kernel func)
   (interactive (list (ein:get-kernel-or-error)
                      (ein:object-at-point-or-error)))
   (unless (ein:kernel-utils-magic-func-p func)
     (if (>= (ein:$kernel-api-version kernel) 3)
-        (ein:kernel-utils-execute-command kernel 'object-info-request :args func
-                                      :output
-                                      ((lambda (name msg-type content _metadata)
-                                         (ein:case-equal msg-type
-                                           (("stream" "display_data")
-                                            (ein:kernel-utils-finish-tooltip name
-                                                                        (ein:json-read-from-string
-                                                                         (plist-get content :text))
-                                                                        nil))))
-                                       func))
+        (ein:kernel-utils-execute-command kernel 'request-tooltip
+                                          :args func
+                                          :output
+                                          (#'(lambda (name msg-type content metadata)
+                                               (ein:case-equal msg-type
+                                                 (("stream" "display_data")
+                                                  (ein:kernel-utils-finish-tooltip name
+                                                                                   (ein:json-read-from-string
+                                                                                    (plist-get content :text))
+                                                                                   metadata))))
+                                           func))
       (ein:kernel-object-info-request
        kernel func (list :object_info_reply
                          (cons #'ein:kernel-utils-finish-tooltip nil)
                          :execute_reply
                          (cons #'(lambda (&rest _args)) nil))))))
 
-(declare-function pos-tip-show "pos-tip")
-(declare-function popup-tip "popup")
 
 (defun ein:kernel-utils-finish-tooltip (_ignore content _metadata-not-used-)
   ;; See: Tooltip.prototype._show (tooltip.js)
-  (let ((tooltip (ein:kernel-construct-help-string content))
-        (defstring (ein:kernel-construct-defstring content))
+  (let ((tooltip (ein:kernel-utils--construct-help-string content))
+        (defstring (ein:kernel-utils--construct-defstring content))
         (name (plist-get content :name)))
     (if tooltip
-        (cond
-         ((and window-system (featurep 'pos-tip))
-          (pos-tip-show tooltip 'ein:pos-tip-face nil nil 0))
-         ((featurep 'popup)
-          (popup-tip tooltip))
-         (t (when (stringp defstring)
-              (message (ein:trim (ansi-color-apply defstring))))))
+        (pos-tip-show defstring)
       (ein:log 'info "no info for %s" name))))
 
 (defun ein:kernel-utils-request-help (kernel func)
@@ -269,13 +277,6 @@ working."
   (ein:kernel-utils-execute-command kernel 'request-help
                                     :args func
                                     :silent nil))
-
-;; (ein:kernel-execute kernel
-;;                     (format "%s?" func) ; = code
-;;                     nil                 ; = callbacks
-;;                     ;; It looks like that magic command does
-;;                     ;; not work in silent mode.
-;;                     :silent nil)
 
 (defun ein:kernel-utils-request-tooltip-or-help (&optional pager)
   "Show the help for the object at point using tooltip.
@@ -308,12 +309,10 @@ pager buffer.  You can explicitly specify the object by selecting it."
            (if (string-match ein:kernel-utils-jump-to-source-not-found-regexp it)
                (ein:log 'info
                  "Jumping to the source of %s...Not found" object)
-             (cl-destructuring-bind (filename &optional lineno &rest ignore)
-                 (split-string it "\n")
-               (setq lineno (string-to-number lineno)
-                     filename (ein:kernel-filename-from-python kernel filename))
-               (ein:log 'debug "filename[[%s]] lineno[[%s]] ignore[[%s]]"
-                        filename lineno ignore)
+             (cl-destructuring-bind (&key filename lineno) (ein:json-read-from-string it)
+               (setq filename (ein:kernel-filename-from-python kernel filename))
+               (ein:log 'debug "filename[[%s]] lineno[[%s]]"
+                        filename lineno)
                (if (not (file-exists-p filename))
                    (ein:log 'info
                      "Jumping to the source of %s...Not found" object)
@@ -322,7 +321,8 @@ pager buffer.  You can explicitly specify the object by selecting it."
                    ;; NOTEBOOK instead of the default one.
                    (ein:goto-file filename lineno other-window))
                  ;; Connect current buffer to NOTEBOOK. No reconnection.
-                 (ein:connect-buffer-to-notebook notebook nil t)
+                 (when (fboundp 'ein:connect-buffer-to-notebook)
+                   (ein:connect-buffer-to-notebook notebook nil t))
                  (push (point-marker) ein:kernel-utils-jump-stack)
                  (ein:log 'info "Jumping to the source of %s...Done" object))))))
       (("pyerr" "error")
@@ -340,14 +340,6 @@ pager buffer.  You can explicitly specify the object by selecting it."
                                     :output (#'ein:kernel-utils-jump-to-source-1
                                              (list kernel object other-window notebook))))
 
-;; (ein:kernel-execute
-;;  kernel
-;;  (format "__ein_find_source('%s')" object)
-;;  (list
-;;   :output
-;;   (cons
-;;    #'ein:kernel-utils-jump-to-source-1
-;;    (list kernel object other-window notebook))))
 
 (defun ein:kernel-utils-find-source (kernel object &optional callback)
   "Find the file and line where object is defined.
@@ -357,17 +349,9 @@ found and when callback isort specified, the callback will be
 called with a cons of the filename and line number where object
 is defined."
   (ein:kernel-utils-execute-command kernel 'find-source :args object
-                                :output (#'ein:kernel-utils-finish-find-source
-                                         (list kernel object callback))))
+                                    :output (#'ein:kernel-utils-finish-find-source
+                                             (list kernel object callback))))
 
-;; (ein:kernel-execute
-;;  kernel
-;;  (format "__ein_find_source('%s')" object)
-;;  (list
-;;   :output
-;;   (cons
-;;    #'ein:kernel-utils-finish-find-source
-;;    (list kernel object callback))))
 
 (defun ein:kernel-utils-finish-find-source (packed msg-type content _ignored)
   (cl-destructuring-bind (kernel object callback) packed
@@ -377,16 +361,16 @@ is defined."
             (if (string-match ein:kernel-utils-jump-to-source-not-found-regexp it)
                 (ein:log 'info
                   "Source of %s not found" object)
-              (cl-destructuring-bind (filename &optional lineno &rest ignore)
-                  (split-string it "\n")
+              (cl-destructuring-bind (&key filename lineno) (ein:json-read-from-string it)
                 (if callback
                     (funcall callback
                              (cons (ein:kernel-filename-from-python kernel filename)
                                    (string-to-number lineno)))
                   (cons (ein:kernel-filename-from-python kernel filename)
-                        (string-to-number lineno)))))) ;; FIXME Generator?
+                        lineno))))) ;; FIXME Generator?
       (ein:log 'info "Source of %s notebook found" object))))
 
+;;;###autoload
 (defun ein:kernel-utils-jump-to-source-command (&optional other-window)
   "Jump to the source code of the object at point.
 When the prefix argument ``C-u`` is given, open the source code
