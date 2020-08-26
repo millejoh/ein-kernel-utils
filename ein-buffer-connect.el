@@ -293,11 +293,13 @@ notebook."
 (defun ein:on-edit-source-block--finish (buf nb)
   (with-current-buffer buf
     (ein:connect-buffer-to-notebook nb buf)
-    (add-to-list 'company-backends 'ein:company-backend)))
+    (add-to-list 'company-backends 'ein:company-backend)
+    (local-set-key (kbd "C-c C-e") 'ein:connect-eval-buffer)))
 
 ;;;###autoload
 (defun ein:on-edit-source-block ()
-  (when (cl-search "ein-python" (buffer-name))
+  (when (or (cl-search "ein" (buffer-name))
+            (cl-search "ein-python" (buffer-name)))
     (let ((srcbuf (current-buffer))
           (buf (marker-buffer org-src--beg-marker))
           (pos (marker-position org-src--beg-marker)))
@@ -307,6 +309,10 @@ notebook."
                                   nil
                                   #'(lambda (nb)
                                       (ein:on-edit-source-block--finish srcbuf nb)))))))
+
+;;;###autoload
+(defun org-babel-edit-prep:ein (_babel-info)
+  (ein:on-edit-source-block))
 
 
 
