@@ -71,7 +71,7 @@
                      (list :complete_reply
                            (cons #'ein:completer-finish-completing '(:expand nil)))
                      #'ignore))
-  (multiple-value-bind (code pos) (ein:get-completion-context (ein:$kernel-api-version kernel))
+  (cl-multiple-value-bind (code pos) (ein:get-completion-context (ein:$kernel-api-version kernel))
     (ein:log 'debug (format "EIN:COMPLETER-COMPLETE Code block: %s at position :%s" code pos))
     (ein:kernel-complete kernel
                          code ;; (thing-at-point 'line)
@@ -203,12 +203,11 @@
       replies
     (let ((nix (- cursor_end cursor_start))
           prefixed-matches)
-      (dolist (match matches)
-        (setq prefixed-matches
-              (nconc prefixed-matches (list (concat prefix (substring match nix))))))
+      (cl-loop for match across matches
+               doing (setq prefixed-matches
+                           (nconc prefixed-matches (list (concat prefix (substring match nix))))))
       (ein:completions--build-oinfo-cache prefixed-matches)
       (funcall fetcher prefixed-matches))))
-
 
 
 ;;;###autoload
