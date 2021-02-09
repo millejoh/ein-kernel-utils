@@ -80,14 +80,14 @@
 
 (defun ein:get-completion-context (api-version)
   (cond ((< api-version 5)
-         (values (thing-at-point 'line) (current-column)))
+         (cl-values (thing-at-point 'line) (current-column)))
         ((and (ein:kernel-utils--find-kernel) (ein:get-cell-at-point))
          (let* ((cell (ein:get-cell-at-point))
                 (code (ein:cell-get-text cell))
                 (beg (ein:cell-input-pos-min cell)))
-           (values code (- (point) beg))))
+           (cl-values code (- (point) beg))))
         ((ein:kernel-utils--find-kernel)
-         (values (buffer-string) (1- (point))))))
+         (cl-values (buffer-string) (1- (point))))))
 
 ;;; Retrieving Python Object Info
 (defun ein:completions--reset-oinfo-cache (kernel)
