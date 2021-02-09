@@ -43,6 +43,96 @@
   (ein:$kernelspec-language (ein:$kernel-kernelspec kernel)))
 
 
+;;; Support for kernel "complete_request" and "history_request" messages.
+
+(defun ein:kernel-complete (kernel line cursor-pos callbacks errback)
+  "Complete code at CURSOR-POS in a string LINE on KERNEL.
+
+CURSOR-POS is the position in the string LINE, not in the buffer.
+
+ERRBACK takes a string (error message).
+
+When calling this method pass a CALLBACKS structure of the form:
+
+    (:complete_reply (FUNCTION . ARGUMENT))
+
+Call signature::
+
+  (funcall FUNCTION ARGUMENT CONTENT METADATA)
+
+CONTENT and METADATA are given by `complete_reply' message.
+
+`complete_reply' message is documented here:
+http://ipython.org/ipython-doc/dev/development/messaging.html#complete
+"
+  (condition-case err
+      (let* ((content (if (< (ein:$kernel-api-version kernel) 4)
+                          (list
+                           ;; :text ""
+                           :line line
+                           :cursor_pos cursor-pos)
+                        (list
+                         :code line
+                         :cursor_pos cursor-pos)))
+             (msg (ein:kernel--get-msg kernel "complete_request" content))
+             (msg-id (plist-get (plist-get msg :header) :msg_id)))
+        (cl-assert (ein:kernel-live-p kernel) nil "kernel not live")
+        (ein:websocket-send-shell-channel kernel msg)
+        (ein:kernel-set-callbacks-for-msg kernel msg-id callbacks)
+        msg-id)
+    (error (if errback (funcall errback (error-message-string err))
+             (ein:display-warning (error-message-string err) :error)))))
+
+
+(cl-defun ein:kernel-history-request (kernel callbacks
+                                      &key
+                                      (output nil)
+                                      (raw t)
+                                      (hist-access-type "tail")
+                                      session
+                                      start
+                                      stop
+                                      (n 10)
+                                      pattern
+                                      unique)
+  "Request execution history to KERNEL.
+
+When calling this method pass a CALLBACKS structure of the form:
+
+    (:history_reply (FUNCTION . ARGUMENT))
+
+Call signature::
+
+  (`funcall' FUNCTION ARGUMENT CONTENT METADATA)
+
+CONTENT and METADATA are given by `history_reply' message.
+
+`history_reply' message is documented here:
+http://ipython.org/ipython-doc/dev/development/messaging.html#history
+
+Relevant Python code:
+
+* :py:method:`IPython.zmq.ipkernel.Kernel.history_request`
+* :py:class:`IPython.core.history.HistoryAccessor`
+"
+  (cl-assert (ein:kernel-live-p kernel) nil "history_reply: Kernel is not active.")
+  (let* ((content (list
+                   :output (ein:json-any-to-bool output)
+                   :raw (ein:json-any-to-bool raw)
+                   :hist_access_type hist-access-type
+                   :session session
+                   :start start
+                   :stop stop
+                   :n n
+                   :pattern pattern
+                   :unique unique))
+         (msg (ein:kernel--get-msg kernel "history_request" content))
+         (msg-id (plist-get (plist-get msg :header) :msg_id)))
+    (ein:websocket-send-shell-channel kernel msg)
+    (ein:kernel-set-callbacks-for-msg kernel msg-id callbacks)
+    msg-id))
+
+
 ;;; Kernel support inside a buffer
 
 (defvar *ein:kernel-utils-buffer-registry* (make-hash-table))
@@ -73,8 +163,9 @@
   "Lookup table tool support functions for a given language. Keys
 are symbols representing the language of a running
 kernel (i.e. (make-symbol (ein:kernelinfo-language <kinfo>)).
-Values are an plist of (TOOL-COMMAND-NAME LANG-CODE). TOOL-COMMAND-NAME is a symbol,
-LANG-CODE is a string suitable for passing to format.")
+Values are an plist of (TOOL-COMMAND-NAME
+LANG-CODE). TOOL-COMMAND-NAME is a symbol, LANG-CODE is a string
+suitable for passing to format.")
 
 
 (defun ein:define-kernel-utils-command (language tool-command code)
@@ -553,10 +644,10 @@ Currently EIN/IPython supports exporting to the following formats:
                                    nil)
     (with-current-buffer (ein:shared-output-create-buffer)
       (ein:wait-until #'(lambda ()
-                          (slot-value (slot-value *ein:shared-output* :cell) :outputs))
+                          (slot-value (slot-value *ein:shared-output* 'cell) 'outputs))
                       nil
                       5.0)
-      (let ((outputs (first (slot-value (slot-value *ein:shared-output* :cell) :outputs))))
+      (let ((outputs (first (slot-value (slot-value *ein:shared-output* 'cell) 'outputs))))
         (ein:json-read-from-string (plist-get outputs :text))))))
 
 (defun ein:kernel-utils--estimate-screen-dpi ()
@@ -569,7 +660,7 @@ Currently EIN/IPython supports exporting to the following formats:
 (defun ein:kernel-utils-matplotlib-dpi-correction ()
   "Estimate the screen dpi and set the matplotlib rc parameter 'figure.dpi' to that value. Call this command *after* importing matplotlib into your notebook, else this setting will be overwritten after the first call to `import matplotlib' Further testing is needed to see how well this works on high resolution displays."
   (interactive)
-  (multiple-value-bind (dpi-w dpi-h) (ein:kernel-utils--estimate-screen-dpi)
+  (cl-multiple-value-bind (dpi-w dpi-h) (ein:kernel-utils--estimate-screen-dpi)
     (let ((dpi (floor (/ (+ dpi-w dpi-h) 2.0))))
       (ein:log 'info "Setting matplotlib scaling to: %s dpi" dpi)
       (ein:kernel-utils-set-figure-dpi dpi))))
