@@ -31,6 +31,7 @@
 
 ;;; Code:
 
+(require 'anaphora)
 (require 'ses)
 (require 'pos-tip)
 (require 'ein-kernel)
@@ -42,8 +43,44 @@
 (defun ein:kernel-language (kernel)
   (ein:$kernelspec-language (ein:$kernel-kernelspec kernel)))
 
+(defadvice ein:kernel--handle-payload (around ein:kernel-utils--handle-payload-patch last (kernel callbacks payload))
+  (cl-loop with events = (ein:$kernel-events kernel)
+        for p across payload
+        for text = (or (plist-get p :text) (plist-get (plist-get p :data) :text/plain))
+        for source = (plist-get p :source)
+        if (member source '("IPython.kernel.zmq.page.page"
+                            "IPython.zmq.page.page"
+                            "page"))
+        do (when (not (equal (ein:trim text) ""))
+             (ein:events-trigger
+              events 'open_with_text.Pager (list :text text)))
+        else if
+        (member
+         source
+         '("IPython.kernel.zmq.zmqshell.ZMQInteractiveShell.set_next_input"
+           "IPython.zmq.zmqshell.ZMQInteractiveShell.set_next_input"
+           "set_next_input"))
+        do (let ((cb (plist-get callbacks :set_next_input)))
+             (when cb (ein:funcall-packed cb text)))))
+
 
 ;;; Support for kernel "complete_request" and "history_request" messages.
+
+(defun ein:kernel-request-stream (kernel code func &optional args)
+  "Run lisp callback FUNC with the output stream returned by Python CODE.
+
+The first argument to the lisp function FUNC is the stream output
+as a string and the rest of the argument is the optional ARGS."
+  (ein:kernel-execute
+   kernel
+   code
+   (list :output (cons (lambda (packed msg-type content _metadata)
+                         (let ((func (car packed))
+                               (args (cdr packed)))
+                           (when (equal msg-type "stream")
+                             (aif (plist-get content :text)
+                                 (apply func it args)))))
+                       (cons func args)))))
 
 (defun ein:kernel-complete (kernel line cursor-pos callbacks errback)
   "Complete code at CURSOR-POS in a string LINE on KERNEL.
@@ -228,6 +265,80 @@ suitable for passing to format.")
                     (object-info-request . "(ein-print-object-info-for \"%s\")")
                     (tools-file . "ein_hytools.hy")))
 
+
+;;;; Core functions forgotten by time
+
+;;; File name translation (tramp support)
+
+;; Probably it's better to define `ein:filename-translations-get' as
+;; an EIEIO method so that I don't have to re-define functions such as
+;; `ein:kernel-filename-to-python' and `ein:kernel-filename-from-python'.
+
+(defun ein:filename-translations-get (url-or-port)
+  (ein:choose-setting 'ein:filename-translations url-or-port))
+
+(defun ein:filename-to-python (url-or-port filename)
+  (aif (car (ein:filename-translations-get url-or-port))
+      (funcall it filename)
+    filename))
+
+(defun ein:filename-from-python (url-or-port filename)
+  (aif (cadr (ein:filename-translations-get url-or-port))
+      (funcall it filename)
+    filename))
+
+(defun ein:make-tramp-file-name (username remote-host python-filename)
+  "Old (with multi-hops) tramp compatibility function.
+Adapted from `slime-make-tramp-file-name'."
+  (if (boundp 'tramp-multi-methods)
+      (tramp-make-tramp-file-name nil nil
+                                  username
+                                  remote-host
+                                  python-filename)
+    (tramp-make-tramp-file-name nil
+                                username
+                                remote-host
+                                python-filename)))
+
+(defun ein:tramp-create-filename-translator (remote-host &optional username)
+  "Generate a pair of TO-PYTHON and FROM-PYTHON for
+`ein:filename-translations'.
+
+Usage::
+
+    (setq ein:filename-translations
+          `((8888
+             . ,(ein:tramp-create-filename-translator \"MY-HOSTNAME\"))))
+    ;; Equivalently:
+    (setq ein:filename-translations
+          (lambda (url-or-port)
+            (when (equal url-or-port 8888)
+              (ein:tramp-create-filename-translator \"MY-HOSTNAME\"))))
+
+This setting assumes that the IPython server which can be
+connected using the port 8888 in localhost is actually running in
+the host named MY-HOSTNAME.
+
+Adapted from `slime-create-filename-translator'."
+  (require 'tramp)
+  (let ((remote-host remote-host)
+        (username (or username (user-login-name))))
+    (list (lambda (emacs-filename)
+            (tramp-file-name-localname
+             (tramp-dissect-file-name emacs-filename)))
+          (lambda (python-filename)
+            (ein:make-tramp-file-name username remote-host python-filename)))))
+
+
+;;;; Kernel Functions Forgotten by Time
+
+(defun ein:kernel-filename-to-python (kernel filename)
+  "See: `ein:filename-to-python'."
+  (ein:filename-to-python (ein:$kernel-url-or-port kernel) filename))
+
+(defun ein:kernel-filename-from-python (kernel filename)
+  "See: `ein:filename-from-python'."
+  (ein:filename-from-python (ein:$kernel-url-or-port kernel) filename))
 
 
 
