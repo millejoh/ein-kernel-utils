@@ -203,9 +203,15 @@
       replies
     (let ((nix (- cursor_end cursor_start))
           prefixed-matches)
-      (cl-loop for match across matches
-               doing (setq prefixed-matches
-                           (nconc prefixed-matches (list (concat prefix (substring match nix))))))
+      (cl-typecase  matches
+        (list
+         (cl-loop for match in matches
+                  doing (setq prefixed-matches
+                              (nconc prefixed-matches (list (concat prefix (substring match nix)))))))
+        (array
+         (cl-loop for match across matches
+                  doing (setq prefixed-matches
+                              (nconc prefixed-matches (list (concat prefix (substring match nix))))))))
       (ein:completions--build-oinfo-cache prefixed-matches)
       (funcall fetcher prefixed-matches))))
 
@@ -232,7 +238,8 @@
     (candidates
      (let* ((kernel (ein:kernel-utils--find-kernel))
             (cached (ein:completions-get-cached arg (ein:$kernel-oinfo-cache kernel))))
-       (aif cached it
+       (aif cached
+           it
          (unless (ein:company--punctuation-check (thing-at-point 'line)
                                                  (current-column))
            (cons :async
