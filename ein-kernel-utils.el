@@ -7,7 +7,7 @@
 ;; Version: "0.1"
 ;; Keywords: ein, python
 ;; URL: https://github.com/millejoh/ein-kernel-utils
-;; Package-Requires: ((ein company))
+;; Package-Requires: ((ein company popup ses))
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -32,7 +32,7 @@
 ;;; Code:
 
 (require 'ses)
-(require 'pos-tip)
+(require 'popup)
 (require 'ein-kernel)
 (require 'ein-shared-output)
 
@@ -268,7 +268,7 @@ Used in `ein:pytools-finish-tooltip', etc."
         (defstring (ein:kernel-utils--construct-defstring content))
         (name (plist-get content :name)))
     (if tooltip
-        (pos-tip-show defstring)
+        (popup-tip defstring)
       (ein:log 'info "no info for %s" name))))
 
 (defun ein:kernel-utils-request-help (kernel func)
