@@ -80,14 +80,14 @@
 
 (defun ein:get-completion-context (api-version)
   (cond ((< api-version 5)
-         (values (thing-at-point 'line) (current-column)))
+         (cl-values (thing-at-point 'line) (current-column)))
         ((and (ein:kernel-utils--find-kernel) (ein:get-cell-at-point))
          (let* ((cell (ein:get-cell-at-point))
                 (code (ein:cell-get-text cell))
                 (beg (ein:cell-input-pos-min cell)))
-           (values code (- (point) beg))))
+           (cl-values code (- (point) beg))))
         ((ein:kernel-utils--find-kernel)
-         (values (buffer-string) (1- (point))))))
+         (cl-values (buffer-string) (1- (point))))))
 
 ;;; Retrieving Python Object Info
 (defun ein:completions--reset-oinfo-cache (kernel)
@@ -203,9 +203,15 @@
       replies
     (let ((nix (- cursor_end cursor_start))
           prefixed-matches)
-      (cl-loop for match across matches
-               doing (setq prefixed-matches
-                           (nconc prefixed-matches (list (concat prefix (substring match nix))))))
+      (cl-typecase  matches
+        (list
+         (cl-loop for match in matches
+                  doing (setq prefixed-matches
+                              (nconc prefixed-matches (list (concat prefix (substring match nix)))))))
+        (array
+         (cl-loop for match across matches
+                  doing (setq prefixed-matches
+                              (nconc prefixed-matches (list (concat prefix (substring match nix))))))))
       (ein:completions--build-oinfo-cache prefixed-matches)
       (funcall fetcher prefixed-matches))))
 
@@ -232,7 +238,8 @@
     (candidates
      (let* ((kernel (ein:kernel-utils--find-kernel))
             (cached (ein:completions-get-cached arg (ein:$kernel-oinfo-cache kernel))))
-       (aif cached it
+       (aif cached
+           it
          (unless (ein:company--punctuation-check (thing-at-point 'line)
                                                  (current-column))
            (cons :async

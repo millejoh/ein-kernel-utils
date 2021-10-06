@@ -31,6 +31,7 @@
 
 ;;; Code:
 
+(require 'anaphora)
 (require 'ses)
 (require 'popup)
 (require 'ein-kernel)
@@ -41,6 +42,132 @@
 
 (defun ein:kernel-language (kernel)
   (ein:$kernelspec-language (ein:$kernel-kernelspec kernel)))
+
+(defadvice ein:kernel--handle-payload (around ein:kernel-utils--handle-payload-patch last (kernel callbacks payload))
+  (cl-loop with events = (ein:$kernel-events kernel)
+        for p across payload
+        for text = (or (plist-get p :text) (plist-get (plist-get p :data) :text/plain))
+        for source = (plist-get p :source)
+        if (member source '("IPython.kernel.zmq.page.page"
+                            "IPython.zmq.page.page"
+                            "page"))
+        do (when (not (equal (ein:trim text) ""))
+             (ein:events-trigger
+              events 'open_with_text.Pager (list :text text)))
+        else if
+        (member
+         source
+         '("IPython.kernel.zmq.zmqshell.ZMQInteractiveShell.set_next_input"
+           "IPython.zmq.zmqshell.ZMQInteractiveShell.set_next_input"
+           "set_next_input"))
+        do (let ((cb (plist-get callbacks :set_next_input)))
+             (when cb (ein:funcall-packed cb text)))))
+
+
+;;; Support for kernel "complete_request" and "history_request" messages.
+
+(defun ein:kernel-request-stream (kernel code func &optional args)
+  "Run lisp callback FUNC with the output stream returned by Python CODE.
+
+The first argument to the lisp function FUNC is the stream output
+as a string and the rest of the argument is the optional ARGS."
+  (ein:kernel-execute
+   kernel
+   code
+   (list :output (cons (lambda (packed msg-type content _metadata)
+                         (let ((func (car packed))
+                               (args (cdr packed)))
+                           (when (equal msg-type "stream")
+                             (aif (plist-get content :text)
+                                 (apply func it args)))))
+                       (cons func args)))))
+
+(defun ein:kernel-complete (kernel line cursor-pos callbacks errback)
+  "Complete code at CURSOR-POS in a string LINE on KERNEL.
+
+CURSOR-POS is the position in the string LINE, not in the buffer.
+
+ERRBACK takes a string (error message).
+
+When calling this method pass a CALLBACKS structure of the form:
+
+    (:complete_reply (FUNCTION . ARGUMENT))
+
+Call signature::
+
+  (funcall FUNCTION ARGUMENT CONTENT METADATA)
+
+CONTENT and METADATA are given by `complete_reply' message.
+
+`complete_reply' message is documented here:
+http://ipython.org/ipython-doc/dev/development/messaging.html#complete
+"
+  (condition-case err
+      (let* ((content (if (< (ein:$kernel-api-version kernel) 4)
+                          (list
+                           ;; :text ""
+                           :line line
+                           :cursor_pos cursor-pos)
+                        (list
+                         :code line
+                         :cursor_pos cursor-pos)))
+             (msg (ein:kernel--get-msg kernel "complete_request" content))
+             (msg-id (plist-get (plist-get msg :header) :msg_id)))
+        (cl-assert (ein:kernel-live-p kernel) nil "kernel not live")
+        (ein:websocket-send-shell-channel kernel msg)
+        (ein:kernel-set-callbacks-for-msg kernel msg-id callbacks)
+        msg-id)
+    (error (if errback (funcall errback (error-message-string err))
+             (ein:display-warning (error-message-string err) :error)))))
+
+
+(cl-defun ein:kernel-history-request (kernel callbacks
+                                      &key
+                                      (output nil)
+                                      (raw t)
+                                      (hist-access-type "tail")
+                                      session
+                                      start
+                                      stop
+                                      (n 10)
+                                      pattern
+                                      unique)
+  "Request execution history to KERNEL.
+
+When calling this method pass a CALLBACKS structure of the form:
+
+    (:history_reply (FUNCTION . ARGUMENT))
+
+Call signature::
+
+  (`funcall' FUNCTION ARGUMENT CONTENT METADATA)
+
+CONTENT and METADATA are given by `history_reply' message.
+
+`history_reply' message is documented here:
+http://ipython.org/ipython-doc/dev/development/messaging.html#history
+
+Relevant Python code:
+
+* :py:method:`IPython.zmq.ipkernel.Kernel.history_request`
+* :py:class:`IPython.core.history.HistoryAccessor`
+"
+  (cl-assert (ein:kernel-live-p kernel) nil "history_reply: Kernel is not active.")
+  (let* ((content (list
+                   :output (ein:json-any-to-bool output)
+                   :raw (ein:json-any-to-bool raw)
+                   :hist_access_type hist-access-type
+                   :session session
+                   :start start
+                   :stop stop
+                   :n n
+                   :pattern pattern
+                   :unique unique))
+         (msg (ein:kernel--get-msg kernel "history_request" content))
+         (msg-id (plist-get (plist-get msg :header) :msg_id)))
+    (ein:websocket-send-shell-channel kernel msg)
+    (ein:kernel-set-callbacks-for-msg kernel msg-id callbacks)
+    msg-id))
 
 
 ;;; Kernel support inside a buffer
@@ -73,8 +200,9 @@
   "Lookup table tool support functions for a given language. Keys
 are symbols representing the language of a running
 kernel (i.e. (make-symbol (ein:kernelinfo-language <kinfo>)).
-Values are an plist of (TOOL-COMMAND-NAME LANG-CODE). TOOL-COMMAND-NAME is a symbol,
-LANG-CODE is a string suitable for passing to format.")
+Values are an plist of (TOOL-COMMAND-NAME
+LANG-CODE). TOOL-COMMAND-NAME is a symbol, LANG-CODE is a string
+suitable for passing to format.")
 
 
 (defun ein:define-kernel-utils-command (language tool-command code)
@@ -137,6 +265,80 @@ LANG-CODE is a string suitable for passing to format.")
                     (object-info-request . "(ein-print-object-info-for \"%s\")")
                     (tools-file . "ein_hytools.hy")))
 
+
+;;;; Core functions forgotten by time
+
+;;; File name translation (tramp support)
+
+;; Probably it's better to define `ein:filename-translations-get' as
+;; an EIEIO method so that I don't have to re-define functions such as
+;; `ein:kernel-filename-to-python' and `ein:kernel-filename-from-python'.
+
+(defun ein:filename-translations-get (url-or-port)
+  (ein:choose-setting 'ein:filename-translations url-or-port))
+
+(defun ein:filename-to-python (url-or-port filename)
+  (aif (car (ein:filename-translations-get url-or-port))
+      (funcall it filename)
+    filename))
+
+(defun ein:filename-from-python (url-or-port filename)
+  (aif (cadr (ein:filename-translations-get url-or-port))
+      (funcall it filename)
+    filename))
+
+(defun ein:make-tramp-file-name (username remote-host python-filename)
+  "Old (with multi-hops) tramp compatibility function.
+Adapted from `slime-make-tramp-file-name'."
+  (if (boundp 'tramp-multi-methods)
+      (tramp-make-tramp-file-name nil nil
+                                  username
+                                  remote-host
+                                  python-filename)
+    (tramp-make-tramp-file-name nil
+                                username
+                                remote-host
+                                python-filename)))
+
+(defun ein:tramp-create-filename-translator (remote-host &optional username)
+  "Generate a pair of TO-PYTHON and FROM-PYTHON for
+`ein:filename-translations'.
+
+Usage::
+
+    (setq ein:filename-translations
+          `((8888
+             . ,(ein:tramp-create-filename-translator \"MY-HOSTNAME\"))))
+    ;; Equivalently:
+    (setq ein:filename-translations
+          (lambda (url-or-port)
+            (when (equal url-or-port 8888)
+              (ein:tramp-create-filename-translator \"MY-HOSTNAME\"))))
+
+This setting assumes that the IPython server which can be
+connected using the port 8888 in localhost is actually running in
+the host named MY-HOSTNAME.
+
+Adapted from `slime-create-filename-translator'."
+  (require 'tramp)
+  (let ((remote-host remote-host)
+        (username (or username (user-login-name))))
+    (list (lambda (emacs-filename)
+            (tramp-file-name-localname
+             (tramp-dissect-file-name emacs-filename)))
+          (lambda (python-filename)
+            (ein:make-tramp-file-name username remote-host python-filename)))))
+
+
+;;;; Kernel Functions Forgotten by Time
+
+(defun ein:kernel-filename-to-python (kernel filename)
+  "See: `ein:filename-to-python'."
+  (ein:filename-to-python (ein:$kernel-url-or-port kernel) filename))
+
+(defun ein:kernel-filename-from-python (kernel filename)
+  "See: `ein:filename-from-python'."
+  (ein:filename-from-python (ein:$kernel-url-or-port kernel) filename))
 
 
 
@@ -553,10 +755,10 @@ Currently EIN/IPython supports exporting to the following formats:
                                    nil)
     (with-current-buffer (ein:shared-output-create-buffer)
       (ein:wait-until #'(lambda ()
-                          (slot-value (slot-value *ein:shared-output* :cell) :outputs))
+                          (slot-value (slot-value *ein:shared-output* 'cell) 'outputs))
                       nil
                       5.0)
-      (let ((outputs (first (slot-value (slot-value *ein:shared-output* :cell) :outputs))))
+      (let ((outputs (first (slot-value (slot-value *ein:shared-output* 'cell) 'outputs))))
         (ein:json-read-from-string (plist-get outputs :text))))))
 
 (defun ein:kernel-utils--estimate-screen-dpi ()
@@ -569,7 +771,7 @@ Currently EIN/IPython supports exporting to the following formats:
 (defun ein:kernel-utils-matplotlib-dpi-correction ()
   "Estimate the screen dpi and set the matplotlib rc parameter 'figure.dpi' to that value. Call this command *after* importing matplotlib into your notebook, else this setting will be overwritten after the first call to `import matplotlib' Further testing is needed to see how well this works on high resolution displays."
   (interactive)
-  (multiple-value-bind (dpi-w dpi-h) (ein:kernel-utils--estimate-screen-dpi)
+  (cl-multiple-value-bind (dpi-w dpi-h) (ein:kernel-utils--estimate-screen-dpi)
     (let ((dpi (floor (/ (+ dpi-w dpi-h) 2.0))))
       (ein:log 'info "Setting matplotlib scaling to: %s dpi" dpi)
       (ein:kernel-utils-set-figure-dpi dpi))))
