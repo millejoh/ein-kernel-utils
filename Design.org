@@ -1,0 +1,55 @@
+#+TITLE: Design
+
+* General Design
+
+Entry point: capf or company-backends?
+
+General idea is to send a [[https://jupyter-client.readthedocs.io/en/stable/messaging.html#completion][~complete_request~]] message to the kernel using code
+and cursor postion in notebook cell and return results. For sake of efficiency
+look into caching results, which also will support oinfo/inspect requests.
+
+Note that completion cache is dependent on the kernel session. So for multiple
+sessions there will be multiple completion caches.
+
+Pseudocode, following requirements for CAPF.
+#+BEGIN_SRC elisp
+(defun generate-completion-candidates ()
+  (cl-multiple-value-bind (beg end) ))
+#+END_SRC
+
+* To implement
+** Move to company-capf backend
+
+Documentation for [[info:elisp#Completion in Buffers][completion-at-point]].
+
+Documentation for completion in [[https://jupyter-client.readthedocs.io/en/stable/messaging.html#completion][jupyter]].
+
+** Move away from deferred?
+
+Priority?
+
+Deferred improves responsiveness - or at least prevents emacs from blocking
+during long queries to the running kernel. But it greatly increases the
+complexity of the code, making it more difficult to debug and reason about.
+
+Responsiveness could be helped by doing a good job of caching completion
+candidates - which we are already doing.
+
+Could be done as part of the move to company-capf.
+
+* Issues
+** on-kernel-connect-functions is obsolete and general brokeness
+
+ein:kernel-on-connect is now a no-op, but maybe the event framework still seems
+to work? EIN will still generate 'status_XXX.Kernel events for ... restarting
+and reconnect only?
+
+How does EIN connect to a kernel session these days? As part of call to
+~ein:notebook-open~ a call to ~ein:kernel-retrieve-session~ and so on through
+creating a websocket connection but the call chain doesn't involve signalling
+any events. Shucks.
+
+Thankfully ~ein:kernel-utils-reinject~ still works, but ~ein:company-backend~
+doesn't seem to work. At least nothing happens when calling company-complete.
+
+Maybe an [[info:elisp#Core Advising Primitives][advice]] on ~ein:kernel-retrieve-session~?
